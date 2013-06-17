@@ -65,7 +65,7 @@ public final class TcpPacket extends AbstractPacket {
          builder == null
       || builder.srcPort == null
       || builder.dstPort == null
-      || builder.payloadBuilder == null
+      || (builder.payloadBuilder == null && builder.nonePayload == false)
     ) {
       StringBuilder sb = new StringBuilder();
       sb.append("builder: ").append(builder)
@@ -90,11 +90,22 @@ public final class TcpPacket extends AbstractPacket {
       }
     }
 
-    this.payload = builder.payloadBuilder.build();
-    this.header = new TcpHeader(
-                    builder,
-                    payload.getRawData()
-                  );
+    // Payload 無しのパケットを作成できるよう対処。
+    // (ex. SYN パケット)
+    if (builder.nonePayload) {
+      this.payload = null;
+      this.header = new TcpHeader(
+                      builder,
+                      null
+                    );
+    }
+    else {
+      this.payload = builder.payloadBuilder.build();
+      this.header = new TcpHeader(
+                      builder,
+                      payload.getRawData()
+                    );
+    }
   }
 
   @Override
@@ -177,6 +188,7 @@ public final class TcpPacket extends AbstractPacket {
     private boolean correctLengthAtBuild;
     private boolean correctChecksumAtBuild;
     private boolean paddingAtBuild;
+    private boolean nonePayload;
 
     /**
      *
@@ -434,6 +446,16 @@ public final class TcpPacket extends AbstractPacket {
      */
     public Builder paddingAtBuild(boolean paddingAtBuild) {
       this.paddingAtBuild = paddingAtBuild;
+      return this;
+    }
+
+    /**
+     *
+     * @param nonePayload
+     * @return this Builder object for method chaining.
+     */
+    public Builder nonePayload(boolean nonePayload) {
+      this.nonePayload = nonePayload;
       return this;
     }
 
@@ -713,7 +735,13 @@ public final class TcpPacket extends AbstractPacket {
               && PacketPropertiesLoader.getInstance().tcpV6CalcChecksum()
           )
         ) {
-          this.checksum = calcChecksum(builder.srcAddr, builder.dstAddr, payload);
+          // Payload 無しパケット
+          if (builder.nonePayload) {
+            this.checksum = calcChecksum(builder.srcAddr, builder.dstAddr);
+          }
+          else {
+            this.checksum = calcChecksum(builder.srcAddr, builder.dstAddr, payload);
+          }
         }
         else {
           this.checksum = (short)0;
@@ -750,6 +778,75 @@ public final class TcpPacket extends AbstractPacket {
       // To avoid it, use buildRawData() instead.
       System.arraycopy(buildRawData(), 0, data, 0, length());
       System.arraycopy(payload, 0, data, length(), payload.length);
+
+      for (int i = 0; i < CHECKSUM_SIZE; i++) {
+        data[CHECKSUM_OFFSET + i] = (byte)0;
+      }
+
+      // pseudo header
+      System.arraycopy(
+        srcAddr.getAddress(), 0,
+        data, destPos, srcAddr.getAddress().length
+      );
+      destPos += srcAddr.getAddress().length;
+
+      System.arraycopy(
+        dstAddr.getAddress(), 0,
+        data, destPos, dstAddr.getAddress().length
+      );
+      destPos += dstAddr.getAddress().length;
+
+      if (lowerLayerIsIpV4) {
+        //data[destPos] = (byte)0;
+        destPos++;
+      }
+      else {
+        destPos += 3;
+      }
+
+      data[destPos] = IpNumber.TCP.value();
+      destPos++;
+
+      System.arraycopy(
+        ByteArrays.toByteArray((short)totalLength), 0,
+        data, destPos, SHORT_SIZE_IN_BYTES
+      );
+      destPos += SHORT_SIZE_IN_BYTES;
+
+      return ByteArrays.calcChecksum(data);
+    }
+
+    /**
+     * 
+     * @param srcAddr
+     * @param dstAddr
+     * @return checksum
+     */
+    private short calcChecksum(
+      InetAddress srcAddr, InetAddress dstAddr
+    ) {
+      byte[] data;
+      int destPos;
+      int totalLength = length();
+      boolean lowerLayerIsIpV4 = srcAddr instanceof Inet4Address;
+
+      int pseudoHeaderSize
+        = lowerLayerIsIpV4 ? IPV4_PSEUDO_HEADER_SIZE
+                           : IPV6_PSEUDO_HEADER_SIZE;
+
+      if ((totalLength % 2) != 0) {
+        data = new byte[totalLength + 1 + pseudoHeaderSize];
+        destPos = totalLength + 1;
+      }
+      else {
+        data = new byte[totalLength + pseudoHeaderSize];
+        destPos = totalLength;
+      }
+
+      // If call getRawData() here, rawData will be cached with
+      // an invalid checksum in some cases.
+      // To avoid it, use buildRawData() instead.
+      System.arraycopy(buildRawData(), 0, data, 0, length());
 
       for (int i = 0; i < CHECKSUM_SIZE; i++) {
         data[CHECKSUM_OFFSET + i] = (byte)0;
