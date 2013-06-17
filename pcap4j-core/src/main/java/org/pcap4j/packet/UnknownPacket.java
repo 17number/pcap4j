@@ -50,9 +50,18 @@ public final class UnknownPacket extends AbstractPacket {
       throw new NullPointerException(sb.toString());
     }
 
-    this.rawData = new byte[builder.rawData.length];
+    // データパケットを同じバッファで使いまわせるよう修正
+    // (データサイズに合わせて、new し直さなくて良いように)
+    int length;
+    if(builder.payloadLen == -1) {
+      length = builder.rawData.length;
+    }
+    else {
+      length = builder.payloadLen;
+    }
+    this.rawData = new byte[length];
     System.arraycopy(
-      builder.rawData, 0, this.rawData, 0, builder.rawData.length
+      builder.rawData, 0, this.rawData, 0, length
     );
   }
 
@@ -78,14 +87,18 @@ public final class UnknownPacket extends AbstractPacket {
   public static final class Builder extends AbstractBuilder {
 
     private byte[] rawData;
+    private int payloadLen;
 
     /**
      *
      */
-    public Builder() {}
+    public Builder() {
+      payloadLen = -1;
+    }
 
     private Builder(UnknownPacket packet) {
       rawData = packet.rawData;
+      payloadLen = rawData.length;
     }
 
     /**
@@ -95,6 +108,16 @@ public final class UnknownPacket extends AbstractPacket {
      */
     public Builder rawData(byte[] rawData) {
       this.rawData = rawData;
+      return this;
+    }
+
+    /**
+     *
+     * @param payloadLen
+     * @return this Builder object for method chaining.
+     */
+    public Builder payloadLen(int payloadLen) {
+      this.payloadLen = payloadLen;
       return this;
     }
 
