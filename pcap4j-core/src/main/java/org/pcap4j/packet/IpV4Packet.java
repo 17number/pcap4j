@@ -48,6 +48,14 @@ public final class IpV4Packet extends AbstractPacket {
     this.header = new IpV4Header(rawData);
 
     int payloadLength = header.getTotalLengthAsInt() - header.length();
+    // TSO(TCP Segment Offload) 対策
+    // IP Header - Total Length が 0 のパケットを受信した際に、
+    // payloadLength < 0 となり、ByteArrays.GetSubArray にて、
+    // ArrayIndexOutOfBoundsException が発生してしまう。
+    // 他にやり方あるかもしれないが暫定対処。
+    if (payloadLength < header.length()) {
+      payloadLength = rawData.length -  header.length();
+    }
     byte[] rawPayload;
 
     if (payloadLength > rawData.length - header.length()) {
